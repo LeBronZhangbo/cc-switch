@@ -908,6 +908,8 @@ impl Database {
         }
         if Self::table_exists(conn, "proxy_request_logs")? {
             Self::add_column_if_missing(conn, "proxy_request_logs", "request_model", "TEXT")?;
+            Self::add_column_if_missing(conn, "proxy_request_logs", "input_content", "TEXT")?;
+            Self::add_column_if_missing(conn, "proxy_request_logs", "output_content", "TEXT")?;
         }
 
         log::info!("v4 -> v5 迁移完成：已添加计费模式与请求模型字段");
