@@ -869,7 +869,12 @@
     "costBreakdown": "成本明细",
     "performance": "性能信息",
     "latency": "延迟",
-    "errorMessage": "错误信息"
+    "errorMessage": "错误信息",
+    "action": "操作",
+    "viewContent": "查看内容",
+    "inputContent": "用户输入",
+    "outputContent": "模型输出",
+    "noContent": "无内容"
   },
   "usageScript": {
     "title": "配置用量查询",

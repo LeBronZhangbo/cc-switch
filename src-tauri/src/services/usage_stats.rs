@@ -113,6 +113,10 @@ pub struct RequestLogDetail {
     pub status_code: u16,
     pub error_message: Option<String>,
     pub created_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_content: Option<String>,
 }
 
 impl Database {
@@ -447,7 +451,8 @@ impl Database {
                     l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens,
                     l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
                     l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
-                    l.status_code, l.error_message, l.created_at
+                    l.status_code, l.error_message, l.created_at,
+                    l.input_content, l.output_content
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              {where_clause}
@@ -484,6 +489,8 @@ impl Database {
                 status_code: row.get::<_, i64>(20)? as u16,
                 error_message: row.get(21)?,
                 created_at: row.get(22)?,
+                input_content: row.get(23)?,
+                output_content: row.get(24)?,
             })
         })?;
 
@@ -520,10 +527,11 @@ impl Database {
         let result = conn.query_row(
             "SELECT l.request_id, l.provider_id, p.name as provider_name, l.app_type, l.model,
                     l.request_model, l.cost_multiplier,
-                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                    input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
-                    is_streaming, latency_ms, first_token_ms, duration_ms,
-                    status_code, error_message, created_at
+                    l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens,
+                    l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
+                    l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
+                    l.status_code, l.error_message, l.created_at,
+                    l.input_content, l.output_content
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              WHERE l.request_id = ?",
@@ -553,6 +561,8 @@ impl Database {
                     status_code: row.get::<_, i64>(20)? as u16,
                     error_message: row.get(21)?,
                     created_at: row.get(22)?,
+                    input_content: row.get(23)?,
+                    output_content: row.get(24)?,
                 })
             },
         );

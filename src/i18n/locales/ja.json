@@ -869,7 +869,12 @@
     "costBreakdown": "コスト明細",
     "performance": "パフォーマンス",
     "latency": "レイテンシー",
-    "errorMessage": "エラーメッセージ"
+    "errorMessage": "エラーメッセージ",
+    "action": "アクション",
+    "viewContent": "内容を表示",
+    "inputContent": "ユーザー入力",
+    "outputContent": "モデル出力",
+    "noContent": "内容なし"
   },
   "usageScript": {
     "title": "利用状況を設定",

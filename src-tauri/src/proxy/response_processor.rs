@@ -38,12 +38,124 @@ pub fn is_sse_response(response: &reqwest::Response) -> bool {
         .unwrap_or(false)
 }
 
+/// 最大内容截断长度
+const MAX_CONTENT_LENGTH: usize = 2000;
+
+/// 从响应 JSON 中提取模型输出内容
+fn extract_output_content(json: &Value) -> Option<String> {
+    // 尝试 OpenAI 格式: choices[0].message.content
+    if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
+        if let Some(first) = choices.first() {
+            if let Some(content) = first.get("message").and_then(|m| m.get("content")) {
+                if let Some(text) = content.as_str() {
+                    return Some(if text.len() > MAX_CONTENT_LENGTH {
+                        format!("{}...[截断]", &text[..MAX_CONTENT_LENGTH])
+                    } else {
+                        text.to_string()
+                    });
+                }
+            }
+        }
+    }
+
+    // 尝试 Anthropic 格式: content[0].text
+    if let Some(content) = json.get("content").and_then(|c| c.as_array()) {
+        if let Some(first) = content.first() {
+            if let Some(text) = first.get("text").and_then(|t| t.as_str()) {
+                return Some(if text.len() > MAX_CONTENT_LENGTH {
+                    format!("{}...[截断]", &text[..MAX_CONTENT_LENGTH])
+                } else {
+                    text.to_string()
+                });
+            }
+        }
+    }
+
+    // 尝试 Gemini 格式: candidates[0].content.parts[0].text
+    if let Some(candidates) = json.get("candidates").and_then(|c| c.as_array()) {
+        if let Some(first) = candidates.first() {
+            if let Some(parts) = first.get("content").and_then(|c| c.get("parts")).and_then(|p| p.as_array()) {
+                if let Some(first_part) = parts.first() {
+                    if let Some(text) = first_part.get("text").and_then(|t| t.as_str()) {
+                        return Some(if text.len() > MAX_CONTENT_LENGTH {
+                            format!("{}...[截断]", &text[..MAX_CONTENT_LENGTH])
+                        } else {
+                            text.to_string()
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// 截断辅助函数
+fn truncate(s: &str) -> String {
+    if s.len() > MAX_CONTENT_LENGTH {
+        format!("{}...[截断]", &s[..MAX_CONTENT_LENGTH])
+    } else {
+        s.to_string()
+    }
+}
+
+/// 从请求 JSON 中提取用户输入内容
+fn extract_input_content(json: &Value) -> Option<String> {
+    // Anthropic 格式: messages[最后一条].content
+    if let Some(messages) = json.get("messages").and_then(|m| m.as_array()) {
+        // 找到最后一条用户消息
+        if let Some(last_user_msg) = messages.iter().rev().find(|m| {
+            m.get("role").and_then(|r| r.as_str()) == Some("user")
+        }) {
+            let content = last_user_msg.get("content")?;
+            // content 可能是字符串或数组
+            if let Some(text) = content.as_str() {
+                return Some(truncate(text));
+            }
+            if let Some(parts) = content.as_array() {
+                let text: String = parts.iter()
+                    .filter_map(|part| {
+                        if part.get("type").and_then(|t| t.as_str()) == Some("text") {
+                            part.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if !text.is_empty() {
+                    return Some(truncate(&text));
+                }
+            }
+        }
+    }
+
+    // Gemini 格式: contents[最后一条].parts[0].text
+    if let Some(contents) = json.get("contents").and_then(|c| c.as_array()) {
+        if let Some(last) = contents.last() {
+            if let Some(parts) = last.get("parts").and_then(|p| p.as_array()) {
+                let text: String = parts.iter()
+                    .filter_map(|p| p.get("text").and_then(|t| t.as_str()).map(|s| s.to_string()))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if !text.is_empty() {
+                    return Some(truncate(&text));
+                }
+            }
+        }
+    }
+
+    None
+}
+
 /// 处理流式响应
 pub async fn handle_streaming(
     response: reqwest::Response,
     ctx: &RequestContext,
     state: &ProxyState,
     parser_config: &UsageParserConfig,
+    request_body: Option<&Value>,
 ) -> Response {
     let status = response.status();
     log::debug!(
@@ -64,8 +176,11 @@ pub async fn handle_streaming(
         .bytes_stream()
         .map(|chunk| chunk.map_err(|e| std::io::Error::other(e.to_string())));
 
+    // 提取输入内容
+    let input_content = request_body.and_then(extract_input_content);
+
     // 创建使用量收集器
-    let usage_collector = create_usage_collector(ctx, state, status.as_u16(), parser_config);
+    let usage_collector = create_usage_collector(ctx, state, status.as_u16(), parser_config, input_content);
 
     // 获取流式超时配置
     let timeout_config = ctx.streaming_timeout_config();
@@ -90,6 +205,7 @@ pub async fn handle_non_streaming(
     ctx: &RequestContext,
     state: &ProxyState,
     parser_config: &UsageParserConfig,
+    request_body: Option<&Value>,
 ) -> Result<Response, ProxyError> {
     let response_headers = response.headers().clone();
     let status = response.status();
@@ -114,7 +230,11 @@ pub async fn handle_non_streaming(
     );
 
     // 解析并记录使用量
+    let input_content = request_body.and_then(extract_input_content);
     if let Ok(json_value) = serde_json::from_slice::<Value>(&body_bytes) {
+        // 提取输出内容
+        let output_content = extract_output_content(&json_value);
+
         // 解析使用量
         if let Some(usage) = (parser_config.response_parser)(&json_value) {
             // 优先使用 usage 中解析出的模型名称，其次使用响应中的 model 字段，最后回退到请求模型
@@ -134,6 +254,8 @@ pub async fn handle_non_streaming(
                 &ctx.request_model,
                 status.as_u16(),
                 false,
+                input_content,
+                output_content,
             );
         } else {
             let model = json_value
@@ -149,6 +271,8 @@ pub async fn handle_non_streaming(
                 &ctx.request_model,
                 status.as_u16(),
                 false,
+                input_content,
+                output_content,
             );
             log::debug!(
                 "[{}] 未能解析 usage 信息，跳过记录",
@@ -169,6 +293,8 @@ pub async fn handle_non_streaming(
             &ctx.request_model,
             status.as_u16(),
             false,
+            input_content,
+            None,
         );
     }
 
@@ -193,11 +319,12 @@ pub async fn process_response(
     ctx: &RequestContext,
     state: &ProxyState,
     parser_config: &UsageParserConfig,
+    request_body: Option<&Value>,
 ) -> Result<Response, ProxyError> {
     if is_sse_response(&response) {
-        Ok(handle_streaming(response, ctx, state, parser_config).await)
+        Ok(handle_streaming(response, ctx, state, parser_config, request_body).await)
     } else {
-        handle_non_streaming(response, ctx, state, parser_config).await
+        handle_non_streaming(response, ctx, state, parser_config, request_body).await
     }
 }
 
@@ -282,6 +409,7 @@ fn create_usage_collector(
     state: &ProxyState,
     status_code: u16,
     parser_config: &UsageParserConfig,
+    input_content: Option<String>,
 ) -> SseUsageCollector {
     let state = state.clone();
     let provider_id = ctx.provider.id.clone();
@@ -302,6 +430,7 @@ fn create_usage_collector(
             let provider_id = provider_id.clone();
             let session_id = session_id.clone();
             let request_model = request_model.clone();
+            let input_content = input_content.clone();
 
             tokio::spawn(async move {
                 log_usage_internal(
@@ -316,6 +445,8 @@ fn create_usage_collector(
                     true, // is_streaming
                     status_code,
                     Some(session_id),
+                    input_content,
+                    None, // 流式响应的输出内容暂不捕获
                 )
                 .await;
             });
@@ -326,6 +457,7 @@ fn create_usage_collector(
             let provider_id = provider_id.clone();
             let session_id = session_id.clone();
             let request_model = request_model.clone();
+            let input_content = input_content.clone();
 
             tokio::spawn(async move {
                 log_usage_internal(
@@ -340,6 +472,8 @@ fn create_usage_collector(
                     true, // is_streaming
                     status_code,
                     Some(session_id),
+                    input_content,
+                    None,
                 )
                 .await;
             });
@@ -357,6 +491,8 @@ fn spawn_log_usage(
     request_model: &str,
     status_code: u16,
     is_streaming: bool,
+    input_content: Option<String>,
+    output_content: Option<String>,
 ) {
     let state = state.clone();
     let provider_id = ctx.provider.id.clone();
@@ -379,6 +515,8 @@ fn spawn_log_usage(
             is_streaming,
             status_code,
             Some(session_id),
+            input_content,
+            output_content,
         )
         .await;
     });
@@ -398,6 +536,8 @@ async fn log_usage_internal(
     is_streaming: bool,
     status_code: u16,
     session_id: Option<String>,
+    input_content: Option<String>,
+    output_content: Option<String>,
 ) {
     use super::usage::logger::UsageLogger;
 
@@ -436,6 +576,8 @@ async fn log_usage_internal(
         session_id,
         None, // provider_type
         is_streaming,
+        input_content,
+        output_content,
     ) {
         log::warn!("[USG-001] 记录使用量失败: {e}");
     }

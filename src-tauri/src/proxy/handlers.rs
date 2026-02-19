@@ -102,7 +102,7 @@ pub async fn handle_messages(
     }
 
     // 通用响应处理（透传模式）
-    process_response(response, &ctx, &state, &CLAUDE_PARSER_CONFIG).await
+    process_response(response, &ctx, &state, &CLAUDE_PARSER_CONFIG, Some(&body)).await
 }
 
 /// Claude 格式转换处理（独有逻辑）
@@ -149,6 +149,8 @@ async fn handle_claude_transform(
                             first_token_ms,
                             true,
                             status_code,
+                            None,
+                            None,
                         )
                         .await;
                     });
@@ -231,6 +233,8 @@ async fn handle_claude_transform(
                     None,
                     false,
                     status.as_u16(),
+                    None,
+                    None,
                 )
                 .await;
             }
@@ -285,7 +289,7 @@ pub async fn handle_chat_completions(
         .forward_with_retry(
             &AppType::Codex,
             "/chat/completions",
-            body,
+            body.clone(),
             headers,
             ctx.get_providers(),
         )
@@ -304,7 +308,7 @@ pub async fn handle_chat_completions(
     ctx.provider = result.provider;
     let response = result.response;
 
-    process_response(response, &ctx, &state, &OPENAI_PARSER_CONFIG).await
+    process_response(response, &ctx, &state, &OPENAI_PARSER_CONFIG, Some(&body)).await
 }
 
 /// 处理 /v1/responses 请求（OpenAI Responses API - Codex CLI 透传）
@@ -326,7 +330,7 @@ pub async fn handle_responses(
         .forward_with_retry(
             &AppType::Codex,
             "/responses",
-            body,
+            body.clone(),
             headers,
             ctx.get_providers(),
         )
@@ -345,7 +349,7 @@ pub async fn handle_responses(
     ctx.provider = result.provider;
     let response = result.response;
 
-    process_response(response, &ctx, &state, &CODEX_PARSER_CONFIG).await
+    process_response(response, &ctx, &state, &CODEX_PARSER_CONFIG, Some(&body)).await
 }
 
 // ============================================================================
@@ -380,7 +384,7 @@ pub async fn handle_gemini(
         .forward_with_retry(
             &AppType::Gemini,
             endpoint,
-            body,
+            body.clone(),
             headers,
             ctx.get_providers(),
         )
@@ -399,7 +403,7 @@ pub async fn handle_gemini(
     ctx.provider = result.provider;
     let response = result.response;
 
-    process_response(response, &ctx, &state, &GEMINI_PARSER_CONFIG).await
+    process_response(response, &ctx, &state, &GEMINI_PARSER_CONFIG, Some(&body)).await
 }
 
 // ============================================================================
@@ -448,6 +452,8 @@ async fn log_usage(
     first_token_ms: Option<u64>,
     is_streaming: bool,
     status_code: u16,
+    input_content: Option<String>,
+    output_content: Option<String>,
 ) {
     use super::usage::logger::UsageLogger;
 
@@ -478,6 +484,8 @@ async fn log_usage(
         None,
         None, // provider_type
         is_streaming,
+        input_content,
+        output_content,
     ) {
         log::warn!("[USG-001] 记录使用量失败: {e}");
     }

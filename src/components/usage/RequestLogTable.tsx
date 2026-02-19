@@ -17,10 +17,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useRequestLogs, usageKeys } from "@/lib/query/usage";
 import { useQueryClient } from "@tanstack/react-query";
-import type { LogFilters } from "@/types/usage";
-import { ChevronLeft, ChevronRight, RefreshCw, Search, X } from "lucide-react";
+import type { LogFilters, RequestLog } from "@/types/usage";
+import { ChevronLeft, ChevronRight, RefreshCw, Search, X, FileText } from "lucide-react";
 import {
   fmtInt,
   fmtUsd,
@@ -55,6 +61,7 @@ export function RequestLogTable({ refreshIntervalMs }: RequestLogTableProps) {
   const [page, setPage] = useState(0);
   const pageSize = 20;
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [selectedLog, setSelectedLog] = useState<RequestLog | null>(null);
 
   const { data: result, isLoading } = useRequestLogs({
     filters: appliedFilters,
@@ -371,6 +378,9 @@ export function RequestLogTable({ refreshIntervalMs }: RequestLogTableProps) {
                   <TableHead className="whitespace-nowrap">
                     {t("usage.status")}
                   </TableHead>
+                  <TableHead className="whitespace-nowrap">
+                    {t("usage.action")}
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -506,12 +516,77 @@ export function RequestLogTable({ refreshIntervalMs }: RequestLogTableProps) {
                           {log.statusCode}
                         </span>
                       </TableCell>
+                      <TableCell>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setSelectedLog(log)}
+                          className="h-8 px-2"
+                          title={t("usage.viewContent")}
+                        >
+                          <FileText className="h-4 w-4" />
+                        </Button>
+                      </TableCell>
                     </TableRow>
                   ))
                 )}
               </TableBody>
             </Table>
           </div>
+
+          {/* 请求内容详情对话框 */}
+          <Dialog open={selectedLog !== null} onOpenChange={(open) => !open && setSelectedLog(null)}>
+            <DialogContent className="max-w-3xl max-h-[80vh] overflow-hidden flex flex-col">
+              <DialogHeader>
+                <DialogTitle>{t("usage.requestDetail")}</DialogTitle>
+              </DialogHeader>
+              {selectedLog && (
+                <div className="flex-1 overflow-y-auto space-y-4">
+                  {/* 基本信息 */}
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="text-muted-foreground">{t("usage.time")}: </span>
+                      <span>{new Date(selectedLog.createdAt * 1000).toLocaleString(locale)}</span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">{t("usage.provider")}: </span>
+                      <span>{selectedLog.providerName || t("usage.unknownProvider")}</span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">{t("usage.billingModel")}: </span>
+                      <span>{selectedLog.model}</span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">{t("usage.status")}: </span>
+                      <span className={selectedLog.statusCode >= 200 && selectedLog.statusCode < 300 ? "text-green-600" : "text-red-600"}>
+                        {selectedLog.statusCode}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 用户输入 */}
+                  <div className="space-y-2">
+                    <h4 className="font-medium">{t("usage.inputContent")}</h4>
+                    <div className="p-3 rounded bg-muted max-h-[200px] overflow-y-auto">
+                      <pre className="text-xs whitespace-pre-wrap break-all font-mono">
+                        {selectedLog.inputContent || t("usage.noContent")}
+                      </pre>
+                    </div>
+                  </div>
+
+                  {/* 模型输出 */}
+                  <div className="space-y-2">
+                    <h4 className="font-medium">{t("usage.outputContent")}</h4>
+                    <div className="p-3 rounded bg-muted max-h-[300px] overflow-y-auto">
+                      <pre className="text-xs whitespace-pre-wrap break-all font-mono">
+                        {selectedLog.outputContent || t("usage.noContent")}
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </DialogContent>
+          </Dialog>
 
           {/* 分页控件 */}
           {total > 0 && (

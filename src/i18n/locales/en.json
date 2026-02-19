@@ -869,7 +869,12 @@
     "costBreakdown": "Cost Breakdown",
     "performance": "Performance",
     "latency": "Latency",
-    "errorMessage": "Error Message"
+    "errorMessage": "Error Message",
+    "action": "Action",
+    "viewContent": "View Content",
+    "inputContent": "User Input",
+    "outputContent": "Model Output",
+    "noContent": "No content"
   },
   "usageScript": {
     "title": "Configure Usage Query",
